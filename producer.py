@@ -1,4 +1,4 @@
-
+import os
 import boto3
 
 import logging
@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger(__name__)
 sqs = boto3.resource('sqs')
 
-queue_name = 'calculation-completed'
+queue_name = os.getenv('QUEUE_NAME')
 
 def send_message(message_body, message_attributes=None):
     """
@@ -33,6 +33,7 @@ def send_message(message_body, message_attributes=None):
             MessageBody= message_body,
             MessageAttributes=message_attributes
         )
+        logger.info(f'Message sent successfully')
     except ClientError as error:
         logger.exception("Send message failed: %s", message_body)
         raise error

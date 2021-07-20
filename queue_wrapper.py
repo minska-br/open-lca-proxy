@@ -1,3 +1,4 @@
+import os
 import logging
 
 import boto3
@@ -7,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 sqs = boto3.resource(
     'sqs',
-    endpoint_url= "http://localhost" + ":4566"
+    endpoint_url = os.getenv('SQS_URL')
 )
 
 def get_queue(name):
