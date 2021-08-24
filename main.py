@@ -3,6 +3,7 @@ import yaml
 import logging
 import olca
 import producer
+import os
 
 from fuzzywuzzy import process
 from typing import List, Tuple, Optional
@@ -10,7 +11,7 @@ from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 
 app = FastAPI()
-client = olca.Client(8084)
+client = olca.Client(os.getenv('OPEN_LCA_URL'))
 
 with open('config.yml') as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
