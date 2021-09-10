@@ -1,0 +1,19 @@
+name: Development
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2

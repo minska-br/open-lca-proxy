@@ -2,7 +2,7 @@ name: Deploy to Amazon ECS
 
 on:
   push:
-    branches-ignore:
+    branches:
       - main
 
 defaults:
@@ -50,11 +50,3 @@ jobs:
           task-definition: .aws/task-definition.json 
           container-name: ${{ github.event.repository.name }}
           image: ${{ steps.build-image.outputs.image }}
-
-      # - name: Deploy Amazon ECS task definition
-      #   uses: aws-actions/amazon-ecs-deploy-task-definition@de0132cf8cdedb79975c6d42b77eb7ea193cf28e
-      #   with:
-      #     task-definition: ${{ steps.task-def.outputs.task-definition }}
-      #     service: open-lca-api
-      #     cluster: minska-br
-      #     wait-for-service-stability: true

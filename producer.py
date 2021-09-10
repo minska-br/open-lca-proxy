@@ -1,16 +1,14 @@
 import os
-import boto3
-
 import logging
-import queue_wrapper
 
-import boto3
 from botocore.exceptions import ClientError
 
+import queue_wrapper
 
 logger = logging.getLogger(__name__)
 
 queue_name = os.getenv('QUEUE_NAME')
+
 
 def send_message(message_body, message_attributes=None):
     """
@@ -22,19 +20,20 @@ def send_message(message_body, message_attributes=None):
     :return: The response from SQS that contains the assigned message ID.
     """
     queue = queue_wrapper.get_queue(queue_name)
-    
+
     if not message_attributes:
         message_attributes = {}
 
     try:
-        logger.info(f'Sending message to queue: {queue_name} with message: {message_body}')
+        logger.info(
+            f'Sending message to queue: {queue_name} with message: {message_body}')
         response = queue.send_message(
-            MessageBody= message_body,
+            MessageBody=message_body,
             MessageAttributes=message_attributes
         )
-        logger.info(f'Message sent successfully')
+        logger.info('Message sent successfully')
     except ClientError as error:
-        logger.exception("Send message failed: %s", message_body)
+        logger.exception(f'Send message failed: {message_body}')
         raise error
     else:
         return response
