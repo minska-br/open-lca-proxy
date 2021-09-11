@@ -7,10 +7,8 @@ import queue_wrapper
 
 logger = logging.getLogger(__name__)
 
-queue_name = os.getenv('QUEUE_NAME')
 
-
-def send_message(message_body, message_attributes=None):
+def send_message(message_body, queue_name, message_attributes=None):
     """
     Send a message to an Amazon SQS queue.
 

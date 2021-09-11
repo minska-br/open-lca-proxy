@@ -13,6 +13,10 @@ from pydantic import BaseModel
 app = FastAPI()
 client = olca.Client(os.getenv('OPEN_LCA_URL'))
 
+queue_name = os.getenv('QUEUE_NAME')
+
+queue_name=dlq_queue_name = os.getenv('DLQ_QUEUE_NAME')
+
 with open('config.yml') as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
     logging.config.dictConfig(config)
@@ -39,6 +43,11 @@ class FoodCalculation(BaseModel):
     process_calculations: List[ProcessCalculation]
 
 
+class CalculationError(BaseModel):
+    calculation_id: uuid.UUID
+    error_message: str
+
+
 class FoodCalculationRequestId(BaseModel):
     value: uuid.UUID
 
@@ -52,8 +61,7 @@ async def calculate(products: List[Product], background_tasks: BackgroundTasks):
 
 
 def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
-    logger.info(
-        f'Starting calculation for products: {products} with calculation id: {calculation_id}')
+    logger.info( f'Starting calculation for products: {products} with calculation id: {calculation_id}')
 
     percentage_per_item = 1 / len(products)
 
@@ -66,22 +74,19 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
     )
 
     for product in products:
-
         try:
-            process_name, process_id = _find_process(
-                processes=processes, product_name=product.name)
-            logger.info(
-                f'Creating product system for the product: {process_name} - {process_id}')
+            process_name, process_id = _find_process(processes=processes, product_name=product.name)
+            logger.info(f'Creating product system for the product: {process_name} - {process_id}')
 
-            client.create_product_system(
-                process_id, default_providers='prefer', preferred_type='UNIT_PROCESS')
+            client.create_product_system(process_id, default_providers='prefer', preferred_type='UNIT_PROCESS')
 
             food_calculation.process_calculations.append(
                 _calculate_for_product(
-                    product_amount=product.amount, process_name=process_name, product_name=product.name)
+                    product_amount=product.amount, process_name=process_name, product_name=product.name
+                )
             )
             food_calculation.calculated_percentage += percentage_per_item
-        except:
+        except NoProcessesFound:
             food_calculation.process_calculations.append(
                 ProcessCalculation(
                     name=product.name,
@@ -91,8 +96,15 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
                 )
             )
             continue
+        except Exception as e:
+            calculation_error = CalculationError(
+                calculation_id=calculation_id,
+                error_message=str(e)
+            )
+            producer.send_message(message_body=calculation_error.json(), queue_name=dlq_queue_name)
+            return
 
-    producer.send_message(message_body=food_calculation.json())
+    producer.send_message(message_body=food_calculation.json(), queue_name=queue_name)
 
 
 def _get_all_processes():
@@ -110,14 +122,12 @@ def _get_all_processes():
 
 
 def _find_process(processes: List[Tuple], product_name: str):
-    logger.info(
-        f'Looking for lifecycle processes for the product: {product_name}')
+    logger.info(f'Looking for lifecycle processes for the product: {product_name}')
     processes_name_list = list(zip(*processes))[0]
     processes_found_name, match_score = process.extract(
         product_name, processes_name_list, limit=10)[-1]
 
-    logger.info(
-        f'Product found: [{processes_found_name}] for product: [{product_name}] with score: {match_score}')
+    logger.info(f'Product found: [{processes_found_name}] for product: [{product_name}] with score: {match_score}')
     if match_score <= 60:
         raise NoProcessesFound(product_name)
 
@@ -135,11 +145,9 @@ def _calculate_for_product(product_amount: float, process_name: str, product_nam
     setup.impact_method = client.find(olca.ImpactMethod, 'IPCC 2013 GWP 100a')
     setup.product_system = client.find(olca.ProductSystem, process_name)
 
-    logger.info(
-        f'Starts the calculation process for the product: {process_name} with the amount: {product_amount}')
+    logger.info(f'Starts the calculation process for the product: {process_name} with the amount: {product_amount}')
     calc_result = client.calculate(setup)
-    logger.info(
-        f'Calculation completed for the product: {process_name} with the result: {calc_result.impact_results[0].value}')
+    logger.info(f'Calculation completed for the product: {process_name} with the result: {calc_result.impact_results[0].value}')
 
     logger.info(f'Removes the given entity from the memory of the IPC server')
     client.dispose(calc_result)
