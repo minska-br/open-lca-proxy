@@ -8,8 +8,9 @@ logger = logging.getLogger(__name__)
 
 sqs = boto3.resource(
     'sqs',
-    endpoint_url = os.getenv('SQS_URL')
+    endpoint_url=os.getenv('SQS_URL')
 )
+
 
 def get_queue(name):
     """
