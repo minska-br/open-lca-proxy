@@ -2,19 +2,19 @@ import uuid
 import yaml
 import logging
 import olca
+import elasticsearch_client
 import producer
 import os
 
-from fuzzywuzzy import process
-from typing import List, Tuple, Optional
+from typing import List, Optional
 from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 
 app = FastAPI()
-client = olca.Client(os.getenv('OPEN_LCA_URL'))
+
+open_lca_client = olca.Client(os.getenv('OPEN_LCA_URL'))
 
 queue_name = os.getenv('QUEUE_NAME')
-
 queue_name=dlq_queue_name = os.getenv('DLQ_QUEUE_NAME')
 
 with open('config.yml') as f:
@@ -23,6 +23,7 @@ with open('config.yml') as f:
 
 logger = logging.getLogger(__name__)
 
+_elasticsearch_client = elasticsearch_client.connect_elasticsearch()
 
 class Product(BaseModel):
     name: str
@@ -65,8 +66,6 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
 
     percentage_per_item = 1 / len(products)
 
-    processes = _get_all_processes()
-
     food_calculation = FoodCalculation(
         calculation_id=calculation_id,
         calculated_percentage=0,
@@ -75,14 +74,14 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
 
     for product in products:
         try:
-            process_name, process_id = _find_process(processes=processes, product_name=product.name)
-            logger.info(f'Creating product system for the product: {process_name} - {process_id}')
+            process_found = _find_process(product_name=product.name)
+            logger.info(f'Creating product system for the product: {process_found.name} - {process_found.id}')
 
-            client.create_product_system(process_id, default_providers='prefer', preferred_type='UNIT_PROCESS')
+            open_lca_client.create_product_system(str(process_found.id), default_providers='prefer', preferred_type='UNIT_PROCESS')
 
             food_calculation.process_calculations.append(
                 _calculate_for_product(
-                    product_amount=product.amount, process_name=process_name, product_name=product.name
+                    product_amount=product.amount, process_name=process_found.name, product_name=product.name
                 )
             )
             food_calculation.calculated_percentage += percentage_per_item
@@ -109,7 +108,7 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
 
 def _get_all_processes():
     logger.info('Searching all processes in the OpenLCA database')
-    process_descriptor = client.get_descriptors(olca.Process)
+    process_descriptor = open_lca_client.get_descriptors(olca.Process)
 
     process_list = []
     id_list = []
@@ -121,19 +120,10 @@ def _get_all_processes():
     return list(zip(process_list, id_list))
 
 
-def _find_process(processes: List[Tuple], product_name: str):
-    logger.info(f'Looking for lifecycle processes for the product: {product_name}')
-    processes_name_list = list(zip(*processes))[0]
-    processes_found_name, match_score = process.extract(
-        product_name, processes_name_list, limit=10)[-1]
-
-    logger.info(f'Product found: [{processes_found_name}] for product: [{product_name}] with score: {match_score}')
-    if match_score <= 60:
-        raise NoProcessesFound(product_name)
-
-    processes_found = [item for item in processes if item[0]
-                       == processes_found_name][0]
-    return processes_found
+def _find_process(product_name: str):
+    result = elasticsearch_client.search(_elasticsearch_client, product_name)
+    processes_found = [Process(id=hit["_source"]["id"], name=hit["_source"]["name"]) for hit in result["hits"]["hits"]]
+    return processes_found[0] if processes_found else None
 
 
 def _calculate_for_product(product_amount: float, process_name: str, product_name: str):
@@ -142,15 +132,15 @@ def _calculate_for_product(product_amount: float, process_name: str, product_nam
     logger.info('Perform calculation setup')
     setup.amount = product_amount
     setup.calculation_type = olca.CalculationType.UPSTREAM_ANALYSIS
-    setup.impact_method = client.find(olca.ImpactMethod, 'IPCC 2013 GWP 100a')
-    setup.product_system = client.find(olca.ProductSystem, process_name)
+    setup.impact_method = open_lca_client.find(olca.ImpactMethod, 'IPCC 2013 GWP 100a')
+    setup.product_system = open_lca_client.find(olca.ProductSystem, process_name)
 
     logger.info(f'Starts the calculation process for the product: {process_name} with the amount: {product_amount}')
-    calc_result = client.calculate(setup)
+    calc_result = open_lca_client.calculate(setup)
     logger.info(f'Calculation completed for the product: {process_name} with the result: {calc_result.impact_results[0].value}')
 
     logger.info(f'Removes the given entity from the memory of the IPC server')
-    client.dispose(calc_result)
+    open_lca_client.dispose(calc_result)
 
     return ProcessCalculation(
         name=product_name,
@@ -174,3 +164,35 @@ class NoProcessesFound(Exception):
         self.salary = product_name
         self.message = message
         super().__init__(self.message)
+
+@app.post("/seed", status_code=200)
+def seed():
+    created = elasticsearch_client.create_index(_elasticsearch_client)
+
+    if created:
+        open_lca_processes = _get_all_processes()
+        for open_lca_process in open_lca_processes:
+            search_object = {'id': open_lca_process[1], 'name': open_lca_process[0]}
+            logging.info(f"Saving process with id = {open_lca_process[1]} and name = {open_lca_process[0]}")
+            elasticsearch_client.store_record(_elasticsearch_client, search_object)
+        logging.info("Data load completed successfully")
+    else:
+        logging.info("Index already exists, skipping loading data")
+
+
+@app.delete("/index", status_code=200)
+def delete_index():
+    elasticsearch_client.delete_index(_elasticsearch_client)
+
+class ProductName(BaseModel):
+    value: str
+
+class Process(BaseModel):
+    id: uuid.UUID
+    name: str
+
+@app.post("/search", status_code=200)
+def seed(product_name: ProductName):
+    result = elasticsearch_client.search(_elasticsearch_client, product_name.value)
+    processes_found = [Process(id=hit["_source"]["id"], name=hit["_source"]["name"]) for hit in result["hits"]["hits"]]
+    return processes_found[0] if processes_found else []
