@@ -4,7 +4,9 @@ import logging
 import olca
 import producer
 import os
+import weight_converter
 
+from product import Product
 from fuzzywuzzy import process
 from typing import List, Tuple, Optional
 from fastapi import FastAPI, BackgroundTasks
@@ -15,19 +17,13 @@ client = olca.Client(os.getenv('OPEN_LCA_URL'))
 
 queue_name = os.getenv('QUEUE_NAME')
 
-queue_name=dlq_queue_name = os.getenv('DLQ_QUEUE_NAME')
+dlq_queue_name = os.getenv('DLQ_QUEUE_NAME')
 
 with open('config.yml') as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
     logging.config.dictConfig(config)
 
 logger = logging.getLogger(__name__)
-
-
-class Product(BaseModel):
-    name: str
-    amount: float = 1.0
-
 
 class ProcessCalculation(BaseModel):
     name: str
@@ -82,7 +78,7 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
 
             food_calculation.process_calculations.append(
                 _calculate_for_product(
-                    product_amount=product.amount, process_name=process_name, product_name=product.name
+                    process_name=process_name, product=product
                 )
             )
             food_calculation.calculated_percentage += percentage_per_item
@@ -136,16 +132,16 @@ def _find_process(processes: List[Tuple], product_name: str):
     return processes_found
 
 
-def _calculate_for_product(product_amount: float, process_name: str, product_name: str):
+def _calculate_for_product(process_name: str, product: Product):
     setup = olca.CalculationSetup()
 
     logger.info('Perform calculation setup')
-    setup.amount = product_amount
+    setup.amount = weight_converter.convert_to_kg(product)
     setup.calculation_type = olca.CalculationType.UPSTREAM_ANALYSIS
     setup.impact_method = client.find(olca.ImpactMethod, 'IPCC 2013 GWP 100a')
     setup.product_system = client.find(olca.ProductSystem, process_name)
 
-    logger.info(f'Starts the calculation process for the product: {process_name} with the amount: {product_amount}')
+    logger.info(f'Starts the calculation process for the product: {process_name}')
     calc_result = client.calculate(setup)
     logger.info(f'Calculation completed for the product: {process_name} with the result: {calc_result.impact_results[0].value}')
 
@@ -153,7 +149,7 @@ def _calculate_for_product(product_amount: float, process_name: str, product_nam
     client.dispose(calc_result)
 
     return ProcessCalculation(
-        name=product_name,
+        name=product.name,
         process_name_found=process_name,
         value=calc_result.impact_results[0].value,
         unit=calc_result.impact_results[0].impact_category.ref_unit,
