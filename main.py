@@ -30,7 +30,8 @@ _elasticsearch_client = elasticsearch_client.connect_elasticsearch()
 class ProcessCalculation(BaseModel):
     name: str
     process_name_found: Optional[str] = None
-    value: float
+    value: Optional[float]
+    amount: float
     unit: str
     calculated: bool
 
@@ -86,7 +87,8 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
             food_calculation.process_calculations.append(
                 ProcessCalculation(
                     name=product.name,
-                    value=product.amount,
+                    value=None,
+                    amount=product.amount,
                     unit="kg CO2 eq",
                     calculated=False
                 )
@@ -97,6 +99,8 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
                 calculation_id=calculation_id,
                 error_message=str(e)
             )
+            logging.error(e)
+            
             producer.send_message(message_body=calculation_error.json(), queue_name=dlq_queue_name)
             return
 
@@ -120,14 +124,20 @@ def _get_all_processes():
 def _find_process(product_name: str):
     result = elasticsearch_client.search(_elasticsearch_client, product_name)
     processes_found = [Process(id=hit["_source"]["id"], name=hit["_source"]["name"]) for hit in result["hits"]["hits"]]
-    return processes_found[0] if processes_found else None
+
+    if processes_found:
+        return processes_found[0]
+    else:
+        raise NoProcessesFound(f"No Processes Found for product {product_name}")
 
 
 def _calculate_for_product(process_name: str, product: Product):
     setup = olca.CalculationSetup()
 
+    amount_kg = weight_converter.convert_to_kg(product)
+
     logger.info('Perform calculation setup')
-    setup.amount = weight_converter.convert_to_kg(product)
+    setup.amount = amount_kg
     setup.calculation_type = olca.CalculationType.UPSTREAM_ANALYSIS
     setup.impact_method = open_lca_client.find(olca.ImpactMethod, 'IPCC 2013 GWP 100a')
     setup.product_system = open_lca_client.find(olca.ProductSystem, process_name)
@@ -143,6 +153,7 @@ def _calculate_for_product(process_name: str, product: Product):
         name=product.name,
         process_name_found=process_name,
         value=calc_result.impact_results[0].value,
+        amount=amount_kg,
         unit=calc_result.impact_results[0].impact_category.ref_unit,
         calculated=True
     )
@@ -152,13 +163,9 @@ class NoProcessesFound(Exception):
     """Description - Exception for when no product was found or does 
     not have the necessary macth score to proceed with the calculation 
     of the carbon footprint of the processes.
-
-    Attributes:
-        product_name -- Product's name.
     """
 
-    def __init__(self, product_name, message="No Processes Found"):
-        self.salary = product_name
+    def __init__(self, message: str):
         self.message = message
         super().__init__(self.message)
 
