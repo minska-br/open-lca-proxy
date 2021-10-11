@@ -83,7 +83,7 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
                 )
             )
             food_calculation.calculated_percentage += percentage_per_item
-        except NoProcessesFound:
+        except (NoProcessesFound, CalculationException):
             food_calculation.process_calculations.append(
                 ProcessCalculation(
                     name=product.name,
@@ -143,8 +143,15 @@ def _calculate_for_product(process_name: str, product: Product):
     setup.product_system = open_lca_client.find(olca.ProductSystem, process_name)
 
     logger.info(f'Starts the calculation process for the product: {process_name}')
-    calc_result = open_lca_client.calculate(setup)
-    logger.info(f'Calculation completed for the product: {process_name} with the result: {calc_result.impact_results[0].value}')
+    
+    calc_result = None
+    
+    try:
+        calc_result = open_lca_client.calculate(setup)
+        logger.info(f'Calculation completed for the product: {process_name} with the result: {calc_result.impact_results[0].value}')
+    except Exception as e:
+        logger.error(e)
+        raise NoProcessesFound(f"Error calculating product: {process_name}")
 
     logger.info(f'Removes the given entity from the memory of the IPC server')
     open_lca_client.dispose(calc_result)
@@ -163,6 +170,15 @@ class NoProcessesFound(Exception):
     """Description - Exception for when no product was found or does 
     not have the necessary macth score to proceed with the calculation 
     of the carbon footprint of the processes.
+    """
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(self.message)
+
+class CalculationException(Exception):
+    """Description - Exception for case an unexpected error is thrown 
+    when calculating a product's carbon footprint.
     """
 
     def __init__(self, message: str):
