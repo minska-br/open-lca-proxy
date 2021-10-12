@@ -83,7 +83,7 @@ def _run_calculation(products: List[Product], calculation_id=uuid.UUID):
                 )
             )
             food_calculation.calculated_percentage += percentage_per_item
-        except NoProcessesFound:
+        except (NoProcessesFound, CalculationException):
             food_calculation.process_calculations.append(
                 ProcessCalculation(
                     name=product.name,
@@ -139,12 +139,22 @@ def _calculate_for_product(process_name: str, product: Product):
     logger.info('Perform calculation setup')
     setup.amount = amount_kg
     setup.calculation_type = olca.CalculationType.UPSTREAM_ANALYSIS
-    setup.impact_method = open_lca_client.find(olca.ImpactMethod, 'IPCC 2013 GWP 100a')
+    setup.impact_method = open_lca_client.find(olca.ImpactMethod, 'Greenhouse Gas Protocol')
     setup.product_system = open_lca_client.find(olca.ProductSystem, process_name)
 
     logger.info(f'Starts the calculation process for the product: {process_name}')
-    calc_result = open_lca_client.calculate(setup)
-    logger.info(f'Calculation completed for the product: {process_name} with the result: {calc_result.impact_results[0].value}')
+    
+    calc_result = None
+    total_calculation = 0
+    
+    try:
+        calc_result = open_lca_client.calculate(setup)
+                
+        total_calculation = calc_result.impact_results[0].value + calc_result.impact_results[1].value + calc_result.impact_results[3].value
+        logger.info(f'Calculation completed for the product: {process_name} with the result: {total_calculation}')
+    except Exception as e:
+        logger.error(e)
+        raise NoProcessesFound(f"Error calculating product: {process_name}")
 
     logger.info(f'Removes the given entity from the memory of the IPC server')
     open_lca_client.dispose(calc_result)
@@ -152,9 +162,9 @@ def _calculate_for_product(process_name: str, product: Product):
     return ProcessCalculation(
         name=product.name,
         process_name_found=process_name,
-        value=calc_result.impact_results[0].value,
+        value=total_calculation,
         amount=amount_kg,
-        unit=calc_result.impact_results[0].impact_category.ref_unit,
+        unit="kg CO2 eq",
         calculated=True
     )
 
@@ -163,6 +173,15 @@ class NoProcessesFound(Exception):
     """Description - Exception for when no product was found or does 
     not have the necessary macth score to proceed with the calculation 
     of the carbon footprint of the processes.
+    """
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(self.message)
+
+class CalculationException(Exception):
+    """Description - Exception for case an unexpected error is thrown 
+    when calculating a product's carbon footprint.
     """
 
     def __init__(self, message: str):
