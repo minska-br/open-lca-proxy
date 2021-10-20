@@ -7,7 +7,7 @@ import producer
 import os
 import weight_converter
 
-from product import Product
+from product import Product, CalculationException
 from typing import List, Optional
 from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
@@ -26,6 +26,10 @@ with open('config.yml') as f:
 logger = logging.getLogger(__name__)
 
 _elasticsearch_client = elasticsearch_client.connect_elasticsearch()
+
+class CalculationRequest(BaseModel):
+    id: Optional[uuid.UUID] = None
+    products: List[Product]
 
 class ProcessCalculation(BaseModel):
     name: str
@@ -51,11 +55,17 @@ class FoodCalculationRequestId(BaseModel):
     value: uuid.UUID
 
 
-@app.post("/calculate", response_model=FoodCalculationRequestId, status_code=202)
-async def calculate(products: List[Product], background_tasks: BackgroundTasks):
-    calculation_id = uuid.uuid4()
+@app.post("/calculate", response_model = FoodCalculationRequestId, status_code = 202)
+async def calculate(calculation_request: CalculationRequest, background_tasks: BackgroundTasks):
+    calculation_id = None
 
-    background_tasks.add_task(_run_calculation, products, calculation_id)
+    if (calculation_request.id):
+        calculation_id = calculation_request.id
+    else:
+        calculation_id = uuid.uuid4()
+
+    background_tasks.add_task(_run_calculation, calculation_request.products, calculation_id)
+
     return FoodCalculationRequestId(value=calculation_id)
 
 
@@ -173,15 +183,6 @@ class NoProcessesFound(Exception):
     """Description - Exception for when no product was found or does 
     not have the necessary macth score to proceed with the calculation 
     of the carbon footprint of the processes.
-    """
-
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(self.message)
-
-class CalculationException(Exception):
-    """Description - Exception for case an unexpected error is thrown 
-    when calculating a product's carbon footprint.
     """
 
     def __init__(self, message: str):
