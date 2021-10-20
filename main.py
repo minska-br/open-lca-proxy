@@ -7,7 +7,7 @@ import producer
 import os
 import weight_converter
 
-from product import Product
+from product import Product, CalculationException
 from typing import List, Optional
 from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
@@ -183,15 +183,6 @@ class NoProcessesFound(Exception):
     """Description - Exception for when no product was found or does 
     not have the necessary macth score to proceed with the calculation 
     of the carbon footprint of the processes.
-    """
-
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(self.message)
-
-class CalculationException(Exception):
-    """Description - Exception for case an unexpected error is thrown 
-    when calculating a product's carbon footprint.
     """
 
     def __init__(self, message: str):

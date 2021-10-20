@@ -3,7 +3,7 @@ import logging
 import re
 
 from pydantic import BaseModel
-from product import Product
+from product import Product, CalculationException
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,9 @@ units = [
 
 def convert_to_kg(product: Product):
     logger.info(f"Converting the received unit {product.unit} to the product {product.name}")
+
+    if (product.unit.lower() == "undefined"):
+        raise CalculationException(f"Invalid unit for conversion. Product name: ${product.name}")
 
     unit = next(filter(lambda unit: _verify_unit(value= product.unit.lower(), unit=unit.type.value), units), None)
 
