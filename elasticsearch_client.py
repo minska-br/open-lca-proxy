@@ -1,15 +1,32 @@
 import logging
 import os
 import json
+import boto3
 
-from elasticsearch import Elasticsearch
+from opensearchpy import OpenSearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
+
+host = os.getenv('ELASTICSEARCH_URL')
+region = os.getenv('AWS_DEFAULT_REGION')
+
+service = 'es'
+credentials = boto3.Session().get_credentials()
+
+awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, region, service, session_token=credentials.token)
 
 logger = logging.getLogger(__name__)
 
 def connect_elasticsearch():
-    _elasticsearch_client = Elasticsearch(os.getenv('ELASTICSEARCH_URL'))
+    _elasticsearch_client = OpenSearch(
+        hosts = [{'host': host, 'port': 443}],
+        http_auth = awsauth,
+        use_ssl = True,
+        verify_certs = True,
+        connection_class = RequestsHttpConnection
+    )
+
     if _elasticsearch_client.ping():
-        logger.info('Elasticsearch connected 🎉')
+        logger.info('Elasticsearch connected !')
     else:
         logger.info('Awww it could not connect Elasticsearch!')
     return _elasticsearch_client
